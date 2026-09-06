@@ -19,7 +19,6 @@ import {
   Sparkles,
   Trash2,
   TrendingUp,
-  UserRound,
   WalletCards,
 } from 'lucide-react';
 import {
@@ -236,10 +235,8 @@ function AuthScreen({
 }: {
   onAuthenticated: (user: AuthUser) => void;
 }) {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -251,20 +248,11 @@ function AuthScreen({
       return setError(
         'Use 3–50 letters, numbers, dots, underscores, or hyphens.',
       );
-    if (
-      password.length < (mode === 'register' ? 12 : 1) ||
-      password.length > 128
-    )
-      return setError(
-        mode === 'register'
-          ? 'Password must contain 12–128 characters.'
-          : 'Enter your password.',
-      );
-    if (mode === 'register' && password !== confirmPassword)
-      return setError('Passwords do not match.');
+    if (password.length < 1 || password.length > 128)
+      return setError('Enter your password.');
     setBusy(true);
     try {
-      const response = await fetch(`/api/auth/${mode}`, {
+      const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: normalizedUsername, password }),
@@ -290,13 +278,6 @@ function AuthScreen({
     }
   };
 
-  const changeMode = (next: 'login' | 'register') => {
-    setMode(next);
-    setPassword('');
-    setConfirmPassword('');
-    setError('');
-  };
-
   return (
     <main className="grid min-h-screen place-items-center bg-background px-5 py-10 text-foreground">
       <div className="w-full max-w-md">
@@ -316,12 +297,10 @@ function AuthScreen({
             <LockKeyhole className="size-5" />
           </span>
           <h1 className="font-heading text-3xl font-bold tracking-[-0.03em]">
-            {mode === 'login' ? 'Welcome back' : 'Create your account'}
+            Welcome back
           </h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {mode === 'login'
-              ? 'Sign in to access your private portfolio and research.'
-              : 'Your portfolio will be private to this account.'}
+            Sign in to access your private portfolio and research.
           </p>
           <form onSubmit={submit} className="mt-7 space-y-4">
             <div className="space-y-2">
@@ -343,35 +322,14 @@ function AuthScreen({
               <Input
                 id="auth-password"
                 type="password"
-                autoComplete={
-                  mode === 'login' ? 'current-password' : 'new-password'
-                }
+                autoComplete="current-password"
                 className="h-11 border-white/10 bg-[#081310]"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder={
-                  mode === 'register'
-                    ? 'At least 12 characters'
-                    : 'Your password'
-                }
+                placeholder="Your password"
                 maxLength={128}
               />
             </div>
-            {mode === 'register' && (
-              <div className="space-y-2">
-                <Label htmlFor="auth-confirm">Confirm password</Label>
-                <Input
-                  id="auth-confirm"
-                  type="password"
-                  autoComplete="new-password"
-                  className="h-11 border-white/10 bg-[#081310]"
-                  value={confirmPassword}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                  placeholder="Repeat your password"
-                  maxLength={128}
-                />
-              </div>
-            )}
             {error && (
               <div className="flex gap-2 rounded-xl border border-red-400/20 bg-red-400/8 p-3 text-sm text-red-200">
                 <CircleAlert className="mt-0.5 size-4 shrink-0" />
@@ -381,30 +339,12 @@ function AuthScreen({
             <Button type="submit" className="h-11 w-full" disabled={busy}>
               {busy ? (
                 <LoaderCircle className="animate-spin" />
-              ) : mode === 'login' ? (
-                <LockKeyhole />
               ) : (
-                <UserRound />
+                <LockKeyhole />
               )}
-              {busy
-                ? 'Please wait…'
-                : mode === 'login'
-                  ? 'Sign in'
-                  : 'Create account'}
+              {busy ? 'Please wait…' : 'Sign in'}
             </Button>
           </form>
-          <p className="mt-6 text-center text-sm text-muted-foreground">
-            {mode === 'login' ? 'New to StockNub?' : 'Already have an account?'}{' '}
-            <button
-              type="button"
-              className="font-semibold text-primary hover:underline"
-              onClick={() =>
-                changeMode(mode === 'login' ? 'register' : 'login')
-              }
-            >
-              {mode === 'login' ? 'Create account' : 'Sign in'}
-            </button>
-          </p>
         </section>
         <p className="mt-5 text-center text-xs text-muted-foreground">
           Your credentials are sent securely to the Stock Organizer service.
