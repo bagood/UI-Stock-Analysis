@@ -241,9 +241,9 @@ function AnalysisWorkspace({
   prominentSelector?: boolean;
 }) {
   const [selectedTicker, setSelectedTicker] = useState('');
-  const [openActions, setOpenActions] = useState<Array<AnalysisOption['action']>>([
-    options[0].action,
-  ]);
+  const [openActions, setOpenActions] = useState<
+    Array<AnalysisOption['action']>
+  >([]);
   const activeTicker = stocks.some((stock) => stock.ticker === selectedTicker)
     ? selectedTicker
     : (stocks[0]?.ticker ?? '');
