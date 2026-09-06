@@ -231,12 +231,14 @@ function AnalysisWorkspace({
   detailCache,
   setDetailCache,
   emptyLabel,
+  prominentSelector = false,
 }: {
-  stocks: Array<{ ticker: string; rollingWindow: WindowValue; subtitle: string }>;
+  stocks: Array<{ ticker: string; rollingWindow: WindowValue; subtitle?: string }>;
   options: [AnalysisOption, AnalysisOption];
   detailCache: Record<string, DetailState>;
   setDetailCache: React.Dispatch<React.SetStateAction<Record<string, DetailState>>>;
   emptyLabel: string;
+  prominentSelector?: boolean;
 }) {
   const [selectedTicker, setSelectedTicker] = useState('');
   const [openActions, setOpenActions] = useState<Array<AnalysisOption['action']>>([
@@ -257,21 +259,35 @@ function AnalysisWorkspace({
     );
   };
   const bothOpen = options.every((option) => openActions.includes(option.action));
+  const useEvenColumns = bothOpen || openActions.length === 0;
 
   return (
     <section className="rounded-2xl border border-white/8 bg-card p-5 md:p-6">
-      <div className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <Label htmlFor={`stock-select-${options[0].action}`}>Select stock</Label>
-          <p className="mt-1 text-sm text-muted-foreground">{stock.subtitle}</p>
-        </div>
+      <div
+        className={`mb-5 flex flex-col gap-4 ${prominentSelector ? 'items-start' : 'justify-between sm:flex-row sm:items-end'}`}
+      >
+        {!prominentSelector && (
+          <div>
+            <Label htmlFor={`stock-select-${options[0].action}`}>Select stock</Label>
+            {stock.subtitle && (
+              <p className="mt-1 text-sm text-muted-foreground">
+                {stock.subtitle}
+              </p>
+            )}
+          </div>
+        )}
         <Select
           value={activeTicker}
           onValueChange={(value) => value && setSelectedTicker(value)}
         >
           <SelectTrigger
             id={`stock-select-${options[0].action}`}
-            className="h-11 w-full border-white/10 bg-[#0b1613] sm:w-64"
+            className={
+              prominentSelector
+                ? 'h-auto min-h-16 w-full justify-between rounded-xl border-primary/20 bg-primary/8 px-5 font-heading text-2xl font-bold tracking-[-0.04em] text-foreground hover:bg-primary/12 sm:w-1/4'
+                : 'h-11 w-full border-white/10 bg-[#0b1613] sm:w-64'
+            }
+            aria-label={prominentSelector ? 'Select recommendation stock' : undefined}
           >
             <SelectValue placeholder={emptyLabel} />
           </SelectTrigger>
@@ -284,7 +300,9 @@ function AnalysisWorkspace({
           </SelectContent>
         </Select>
       </div>
-      <div className={`analysis-workspace ${bothOpen ? 'analysis-workspace--even' : ''}`}>
+      <div
+        className={`analysis-workspace ${useEvenColumns ? 'analysis-workspace--even' : ''}`}
+      >
         {options.map((option) => {
           const isOpen = openActions.includes(option.action);
           return (
@@ -418,7 +436,7 @@ function AuthScreen({
                 onChange={(event) =>
                   setUsername(event.target.value.toLowerCase())
                 }
-                placeholder="your.username"
+                placeholder="Your.username"
                 maxLength={50}
               />
             </div>
@@ -879,125 +897,141 @@ function Dashboard({
         </TabsList>
 
         <TabsContent value="recommendations" className="pt-7">
-          <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
-            <div>
-              <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-                <div>
-                  <p className="mb-2 text-sm font-semibold uppercase tracking-[0.18em] text-primary">
-                    Signal board
-                  </p>
-                  <h1 className="font-heading text-3xl font-bold tracking-[-0.03em] md:text-4xl">
-                    Recommended stocks
-                  </h1>
-                  <p className="mt-2 max-w-xl text-base text-muted-foreground">
-                    Current research candidates, grouped by your preferred
-                    trading horizon.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Select
-                    value={rollingWindow}
-                    onValueChange={(value) =>
-                      setRollingWindow(value as WindowValue)
-                    }
+          <section>
+            <div className="mb-6">
+              <p className="mb-2 text-sm font-semibold uppercase tracking-[0.18em] text-primary">
+                Signal board
+              </p>
+              <h1 className="font-heading text-3xl font-bold tracking-[-0.03em] md:text-4xl">
+                Recommended stocks
+              </h1>
+
+              <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-stretch">
+                <Select
+                  value={rollingWindow}
+                  onValueChange={(value) =>
+                    setRollingWindow(value as WindowValue)
+                  }
+                >
+                  <SelectTrigger
+                    className="h-auto min-h-24 w-full flex-1 rounded-2xl border-primary/20 bg-primary/8 px-5 py-4 hover:bg-primary/12 md:w-auto"
+                    aria-label="Select window in focus"
                   >
-                    <SelectTrigger className="h-10 min-w-40 border-white/10 bg-[#101b18]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="5dd">5–10 days</SelectItem>
-                      <SelectItem value="10dd">10–20 days</SelectItem>
-                    </SelectContent>
-                  </Select>
+                    <div className="flex min-w-0 flex-1 items-center gap-4 text-left">
+                      <Sparkles className="size-6 shrink-0 text-primary" />
+                      <div>
+                        <p className="font-mono text-xs uppercase tracking-[0.16em] text-primary">
+                          Window in focus
+                        </p>
+                        <div className="mt-1 flex flex-wrap items-baseline gap-x-2">
+                          <p className="font-heading text-3xl font-bold tracking-[-0.04em] text-foreground">
+                            {rollingWindow === '5dd' ? '5–10' : '10–20'}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            Trading Sessions
+                          </p>
+                        </div>
+                      </div>
+                      <div className="ml-auto border-l border-primary/20 pl-5 text-right">
+                        <strong className="block text-xl text-foreground">
+                          {tickers.length}
+                        </strong>
+                        <span className="text-xs text-muted-foreground">
+                          Published Signals
+                        </span>
+                      </div>
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="5dd">
+                      5–10 Trading Sessions
+                    </SelectItem>
+                    <SelectItem value="10dd">
+                      10–20 Trading Sessions
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <div className="flex gap-3 md:shrink-0">
                   <Button
                     variant="outline"
-                    size="icon-lg"
-                    className="border-white/10 bg-[#101b18]"
+                    className="h-auto min-h-20 flex-1 justify-between rounded-2xl border-primary/20 bg-primary/8 px-5 text-left hover:bg-primary/15 md:min-h-24 md:w-44 md:flex-none"
                     aria-label="Refresh recommendations"
                     onClick={() => void loadRecommendations()}
                     disabled={listStatus === 'loading'}
                   >
+                    <span>
+                      <span className="block font-mono text-xs uppercase tracking-[0.16em] text-primary">
+                        Signals
+                      </span>
+                      <span className="mt-1 block font-heading text-xl font-bold tracking-[-0.03em] text-foreground">
+                        Refresh
+                      </span>
+                    </span>
                     <RefreshCw
-                      className={listStatus === 'loading' ? 'animate-spin' : ''}
+                      className={`size-5 text-primary ${listStatus === 'loading' ? 'animate-spin' : ''}`}
                     />
                   </Button>
                 </div>
               </div>
 
-              {listStatus === 'loading' && (
-                <div className="space-y-3">
-                  {[0, 1, 2].map((item) => (
-                    <Skeleton key={item} className="h-40 w-full rounded-2xl" />
-                  ))}
-                </div>
-              )}
-              {listStatus === 'error' && (
-                <Empty className="min-h-72 border border-white/10 bg-card">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <CircleAlert />
-                    </EmptyMedia>
-                    <EmptyTitle>Recommendations are unavailable</EmptyTitle>
-                    <EmptyDescription>
-                      The research service did not respond. Try again in a
-                      moment.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                  <Button onClick={() => void loadRecommendations()}>
-                    <RefreshCw /> Try again
-                  </Button>
-                </Empty>
-              )}
-              {listStatus === 'ready' && tickers.length === 0 && (
-                <Empty className="min-h-72 border border-white/10 bg-card">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <BarChart3 />
-                    </EmptyMedia>
-                    <EmptyTitle>No signals in this window</EmptyTitle>
-                    <EmptyDescription>
-                      There are no published recommendations for{' '}
-                      {WINDOW_LABELS[rollingWindow]}.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              )}
-              {listStatus === 'ready' && (
-                <AnalysisWorkspace
-                  stocks={tickers.map((ticker) => ({
-                    ticker,
-                    rollingWindow,
-                    subtitle: `IDX · ${WINDOW_LABELS[rollingWindow]} window`,
-                  }))}
-                  options={[
-                    { action: 'entry', title: 'Entry strategy' },
-                    { action: 'report', title: 'Raw analysis' },
-                  ]}
-                  detailCache={detailCache}
-                  setDetailCache={setDetailCache}
-                  emptyLabel="Select a recommendation"
-                />
-              )}
-            </div>
-            <aside className="h-fit rounded-2xl border border-primary/20 bg-primary/8 p-5 lg:sticky lg:top-24">
-              <Sparkles className="mb-8 size-6 text-primary" />
-              <p className="font-mono text-xs uppercase tracking-[0.16em] text-primary">
-                Window in focus
-              </p>
-              <p className="mt-3 font-heading text-4xl font-bold tracking-[-0.04em]">
-                {rollingWindow === '5dd' ? '5–10' : '10–20'}
-              </p>
-              <p className="text-sm text-muted-foreground">trading sessions</p>
-              <div className="my-5 h-px bg-primary/20" />
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Published signals</span>
-                <strong>{tickers.length}</strong>
+              <div className="mt-7">
+                {listStatus === 'loading' && (
+                  <div className="space-y-3">
+                    {[0, 1, 2].map((item) => (
+                      <Skeleton key={item} className="h-40 w-full rounded-2xl" />
+                    ))}
+                  </div>
+                )}
+                {listStatus === 'error' && (
+                  <Empty className="min-h-72 border border-white/10 bg-card">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <CircleAlert />
+                      </EmptyMedia>
+                      <EmptyTitle>Recommendations are unavailable</EmptyTitle>
+                      <EmptyDescription>
+                        The research service did not respond. Try again in a
+                        moment.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                    <Button onClick={() => void loadRecommendations()}>
+                      <RefreshCw /> Try again
+                    </Button>
+                  </Empty>
+                )}
+                {listStatus === 'ready' && tickers.length === 0 && (
+                  <Empty className="min-h-72 border border-white/10 bg-card">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <BarChart3 />
+                      </EmptyMedia>
+                      <EmptyTitle>No signals in this window</EmptyTitle>
+                      <EmptyDescription>
+                        There are no published recommendations for{' '}
+                        {WINDOW_LABELS[rollingWindow]}.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                )}
+                {listStatus === 'ready' && (
+                  <AnalysisWorkspace
+                    stocks={tickers.map((ticker) => ({
+                      ticker,
+                      rollingWindow,
+                    }))}
+                    options={[
+                      { action: 'entry', title: 'Entry Strategy' },
+                      { action: 'report', title: 'Raw Analysis' },
+                    ]}
+                    detailCache={detailCache}
+                    setDetailCache={setDetailCache}
+                    emptyLabel="Select a recommendation"
+                    prominentSelector
+                  />
+                )}
               </div>
-              <p className="mt-5 text-sm leading-6 text-muted-foreground">
-                Signals are research inputs, not guarantees. Review the full
-                thesis and use position sizing that matches your risk limits.
-              </p>
-            </aside>
+            </div>
           </section>
         </TabsContent>
 
@@ -1009,9 +1043,6 @@ function Dashboard({
             <h1 className="font-heading text-3xl font-bold tracking-[-0.03em] md:text-4xl">
               Your portfolio
             </h1>
-            <p className="mt-2 text-base text-muted-foreground">
-              Save an average entry price and attach the right holding horizon.
-            </p>
           </div>
           {legacyPositions.length > 0 && (
             <div className="mb-5 flex flex-col justify-between gap-4 rounded-2xl border border-primary/20 bg-primary/8 p-5 sm:flex-row sm:items-center">
@@ -1057,9 +1088,6 @@ function Dashboard({
                 <h2 className="font-heading text-lg font-bold">
                   {editingId ? 'Update position' : 'Add a position'}
                 </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Saved privately to {user.username}&apos;s account.
-                </p>
               </div>
               {editingId && (
                 <Button type="button" variant="ghost" onClick={resetForm}>
@@ -1073,7 +1101,7 @@ function Dashboard({
                 <Input
                   id="ticker"
                   className="h-11 border-white/10 bg-[#0b1613] uppercase"
-                  placeholder="e.g. BNBR"
+                  placeholder="E.g. BNBR"
                   value={tickerInput}
                   onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
                   maxLength={12}
@@ -1215,6 +1243,7 @@ function Dashboard({
                 detailCache={detailCache}
                 setDetailCache={setDetailCache}
                 emptyLabel="Select a portfolio stock"
+                prominentSelector
               />
             </div>
           )}
@@ -1228,25 +1257,8 @@ function Dashboard({
             <h1 className="font-heading text-3xl font-bold tracking-[-0.03em] md:text-4xl">
               Analysis assistant
             </h1>
-            <p className="mt-2 text-base text-muted-foreground">
-              Ask a focused question and get an answer grounded in the published
-              stock report.
-            </p>
           </div>
           <section className="overflow-hidden rounded-2xl border border-white/8 bg-card">
-            <div className="flex items-center gap-3 border-b border-white/8 px-5 py-4">
-              <span className="grid size-9 place-items-center rounded-lg bg-primary text-primary-foreground">
-                <Sparkles className="size-4" />
-              </span>
-              <div>
-                <h2 className="font-heading font-bold">
-                  StockNub research assistant
-                </h2>
-                <p className="text-xs text-muted-foreground">
-                  Report-grounded preview · full MCP chat connection pending
-                </p>
-              </div>
-            </div>
             <div className="min-h-[420px] space-y-5 p-5 md:p-7">
               {messages.map((message, index) => (
                 <div
@@ -1324,13 +1336,15 @@ function Dashboard({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this position?</AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogDescription className="normal-case">
               This permanently removes the stock from your account portfolio.
               The action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep position</AlertDialogCancel>
+            <AlertDialogCancel className="text-white">
+              Keep position
+            </AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               onClick={() => void deletePosition()}

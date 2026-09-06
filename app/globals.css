@@ -50,6 +50,7 @@
 
 body {
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  text-transform: capitalize;
 }
 
 :root {
