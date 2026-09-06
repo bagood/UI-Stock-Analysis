@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/server/session';
+import { backendUrl } from '@/lib/server/environment';
 
-const API_ROOT = 'https://backend-production.stocknub.online/mcp';
 const ALLOWED_ACTIONS = new Set(['recommendations', 'report', 'entry', 'hold']);
 
 export async function GET(request: NextRequest) {
@@ -37,20 +37,21 @@ export async function GET(request: NextRequest) {
   const paths: Record<string, string> = {
     recommendations: `/analysis?rolling_window=${rollingWindow}`,
     report: `/analysis/report?ticker=${encodeURIComponent(ticker)}&rolling_window=${rollingWindow}`,
-    entry: `/analysis/entry_strategy?ticker=${encodeURIComponent(ticker)}&rolling_window=${rollingWindow}`,
-    hold: `/analysis/hold_strategy?ticker=${encodeURIComponent(ticker)}&rolling_window=${rollingWindow}`,
+    entry: `/entry_strategy/report?ticker=${encodeURIComponent(ticker)}&rolling_window=${rollingWindow}`,
+    hold: `/hold_strategy/report?ticker=${encodeURIComponent(ticker)}&rolling_window=${rollingWindow}`,
   };
 
   try {
-    const response = await fetch(`${API_ROOT}${paths[action]}`, {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(20000),
-    });
-    const data = await response
-      .json()
-      .catch(() => ({
-        detail: 'The analysis service returned an unreadable response.',
-      }));
+    const response = await fetch(
+      `${backendUrl('AGENTIC_BASE_URL')}${paths[action]}`,
+      {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(20000),
+      },
+    );
+    const data = await response.json().catch(() => ({
+      detail: 'The analysis service returned an unreadable response.',
+    }));
     return NextResponse.json(data, { status: response.status });
   } catch {
     return NextResponse.json(

@@ -1,3 +1,5 @@
+import { backendUrl } from '@/lib/server/environment';
+
 export const SESSION_COOKIE = 'stocknub_session';
 
 export type OrganizerUser = {
@@ -23,8 +25,7 @@ export type OrganizerToken = {
   expires_in: number;
 };
 
-export const organizerBaseUrl = () =>
-  (process.env.ORGANIZER_API_URL || 'http://localhost:8000').replace(/\/$/, '');
+export const organizerBaseUrl = () => backendUrl('ORGANIZER_BASE_URL');
 
 export async function organizerFetch(
   path: string,
@@ -46,11 +47,9 @@ export async function organizerFetch(
 export async function readJson(
   response: Response,
 ): Promise<Record<string, unknown> | unknown[]> {
-  const data: unknown = await response
-    .json()
-    .catch(() => ({
-      detail: 'The account service returned an unreadable response.',
-    }));
+  const data: unknown = await response.json().catch(() => ({
+    detail: 'The account service returned an unreadable response.',
+  }));
   return Array.isArray(data) || (typeof data === 'object' && data !== null)
     ? (data as Record<string, unknown> | unknown[])
     : { detail: 'The account service returned an unreadable response.' };
