@@ -113,6 +113,9 @@ function DetailPanel({
   title,
   cache,
   setCache,
+  expanded,
+  onExpandedChange,
+  className = '',
 }: {
   ticker: string;
   rollingWindow: WindowValue;
@@ -120,6 +123,9 @@ function DetailPanel({
   title: string;
   cache: Record<string, DetailState>;
   setCache: React.Dispatch<React.SetStateAction<Record<string, DetailState>>>;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+  className?: string;
 }) {
   const key = `${action}:${ticker}:${rollingWindow}`;
   const detail = cache[key];
@@ -151,8 +157,20 @@ function DetailPanel({
     }
   }, [action, cache, key, rollingWindow, setCache, ticker]);
 
+  useEffect(() => {
+    if (expanded && !detail) void load();
+  }, [detail, expanded, load]);
+
   return (
-    <Accordion onValueChange={(value) => value.length && void load()}>
+    <Accordion
+      value={expanded === undefined ? undefined : expanded ? [key] : []}
+      onValueChange={(value) => {
+        const isExpanded = value.length > 0;
+        onExpandedChange?.(isExpanded);
+        if (isExpanded) void load();
+      }}
+      className={className}
+    >
       <AccordionItem
         value={key}
         className="rounded-xl border border-white/8 bg-[#081310] px-4"
@@ -199,6 +217,93 @@ function DetailPanel({
         </AccordionContent>
       </AccordionItem>
     </Accordion>
+  );
+}
+
+type AnalysisOption = {
+  action: 'entry' | 'hold' | 'report';
+  title: string;
+};
+
+function AnalysisWorkspace({
+  stocks,
+  options,
+  detailCache,
+  setDetailCache,
+  emptyLabel,
+}: {
+  stocks: Array<{ ticker: string; rollingWindow: WindowValue; subtitle: string }>;
+  options: [AnalysisOption, AnalysisOption];
+  detailCache: Record<string, DetailState>;
+  setDetailCache: React.Dispatch<React.SetStateAction<Record<string, DetailState>>>;
+  emptyLabel: string;
+}) {
+  const [selectedTicker, setSelectedTicker] = useState('');
+  const [openActions, setOpenActions] = useState<Array<AnalysisOption['action']>>([
+    options[0].action,
+  ]);
+  const activeTicker = stocks.some((stock) => stock.ticker === selectedTicker)
+    ? selectedTicker
+    : (stocks[0]?.ticker ?? '');
+  const stock = stocks.find((item) => item.ticker === activeTicker);
+
+  if (!stock) return null;
+
+  const toggle = (action: AnalysisOption['action'], isExpanded: boolean) => {
+    setOpenActions((current) =>
+      isExpanded
+        ? [...new Set([...current, action])]
+        : current.filter((item) => item !== action),
+    );
+  };
+  const bothOpen = options.every((option) => openActions.includes(option.action));
+
+  return (
+    <section className="rounded-2xl border border-white/8 bg-card p-5 md:p-6">
+      <div className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <Label htmlFor={`stock-select-${options[0].action}`}>Select stock</Label>
+          <p className="mt-1 text-sm text-muted-foreground">{stock.subtitle}</p>
+        </div>
+        <Select
+          value={activeTicker}
+          onValueChange={(value) => value && setSelectedTicker(value)}
+        >
+          <SelectTrigger
+            id={`stock-select-${options[0].action}`}
+            className="h-11 w-full border-white/10 bg-[#0b1613] sm:w-64"
+          >
+            <SelectValue placeholder={emptyLabel} />
+          </SelectTrigger>
+          <SelectContent>
+            {stocks.map((item) => (
+              <SelectItem key={item.ticker} value={item.ticker}>
+                {item.ticker}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className={`analysis-workspace ${bothOpen ? 'analysis-workspace--even' : ''}`}>
+        {options.map((option) => {
+          const isOpen = openActions.includes(option.action);
+          return (
+            <DetailPanel
+              key={`${activeTicker}:${option.action}`}
+              ticker={activeTicker}
+              rollingWindow={stock.rollingWindow}
+              action={option.action}
+              title={option.title}
+              cache={detailCache}
+              setCache={setDetailCache}
+              expanded={isOpen}
+              onExpandedChange={(next) => toggle(option.action, next)}
+              className={isOpen ? 'analysis-panel--active' : 'analysis-panel--compact'}
+            />
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -858,54 +963,20 @@ function Dashboard({
                 </Empty>
               )}
               {listStatus === 'ready' && (
-                <div className="space-y-3">
-                  {tickers.map((ticker, index) => (
-                    <article
-                      key={ticker}
-                      className="stock-card rounded-2xl border border-white/8 bg-card p-5"
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-center gap-4">
-                          <span className="grid size-12 place-items-center rounded-xl bg-[#16231f] font-mono text-sm font-bold text-primary">
-                            {ticker.slice(0, 2)}
-                          </span>
-                          <div>
-                            <h2 className="font-heading text-xl font-bold tracking-tight">
-                              {ticker}
-                            </h2>
-                            <p className="mt-1 text-sm text-muted-foreground">
-                              IDX · {WINDOW_LABELS[rollingWindow]} window
-                            </p>
-                          </div>
-                        </div>
-                        <Badge
-                          variant="outline"
-                          className="border-primary/25 text-primary"
-                        >
-                          #{String(index + 1).padStart(2, '0')}
-                        </Badge>
-                      </div>
-                      <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                        <DetailPanel
-                          ticker={ticker}
-                          rollingWindow={rollingWindow}
-                          action="entry"
-                          title="Entry strategy"
-                          cache={detailCache}
-                          setCache={setDetailCache}
-                        />
-                        <DetailPanel
-                          ticker={ticker}
-                          rollingWindow={rollingWindow}
-                          action="report"
-                          title="Raw analysis"
-                          cache={detailCache}
-                          setCache={setDetailCache}
-                        />
-                      </div>
-                    </article>
-                  ))}
-                </div>
+                <AnalysisWorkspace
+                  stocks={tickers.map((ticker) => ({
+                    ticker,
+                    rollingWindow,
+                    subtitle: `IDX · ${WINDOW_LABELS[rollingWindow]} window`,
+                  }))}
+                  options={[
+                    { action: 'entry', title: 'Entry strategy' },
+                    { action: 'report', title: 'Raw analysis' },
+                  ]}
+                  detailCache={detailCache}
+                  setDetailCache={setDetailCache}
+                  emptyLabel="Select a recommendation"
+                />
               )}
             </div>
             <aside className="h-fit rounded-2xl border border-primary/20 bg-primary/8 p-5 lg:sticky lg:top-24">
@@ -1126,27 +1197,27 @@ function Dashboard({
                     </Button>
                   </div>
                 </div>
-                <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                  <DetailPanel
-                    ticker={position.ticker}
-                    rollingWindow={position.rollingWindow}
-                    action="hold"
-                    title="Hold strategy"
-                    cache={detailCache}
-                    setCache={setDetailCache}
-                  />
-                  <DetailPanel
-                    ticker={position.ticker}
-                    rollingWindow={position.rollingWindow}
-                    action="report"
-                    title="Raw analysis"
-                    cache={detailCache}
-                    setCache={setDetailCache}
-                  />
-                </div>
               </article>
             ))}
           </div>
+          {portfolioStatus === 'ready' && positions.length > 0 && (
+            <div className="mt-6">
+              <AnalysisWorkspace
+                stocks={positions.map((position) => ({
+                  ticker: position.ticker,
+                  rollingWindow: position.rollingWindow,
+                  subtitle: `Average IDR ${Number(position.averagePrice).toLocaleString('id-ID', { maximumFractionDigits: 4 })} · ${WINDOW_LABELS[position.rollingWindow]}`,
+                }))}
+                options={[
+                  { action: 'hold', title: 'Hold strategy' },
+                  { action: 'report', title: 'Raw analysis' },
+                ]}
+                detailCache={detailCache}
+                setDetailCache={setDetailCache}
+                emptyLabel="Select a portfolio stock"
+              />
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="assistant" className="pt-7">
