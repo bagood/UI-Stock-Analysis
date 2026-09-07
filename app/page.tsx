@@ -1318,11 +1318,11 @@ function Dashboard({
 
       <footer className="mx-auto flex max-w-[1180px] flex-col gap-2 border-t border-white/8 px-5 py-6 text-xs text-muted-foreground md:flex-row md:items-center md:justify-between md:px-8">
         <p>
-          For research and education only. Not personalized financial advice.
+          For research and education only. Not personalized financial advice
         </p>
         <p className="flex items-center gap-1.5">
           <Clock3 className="size-3.5" /> Analysis may be delayed from live
-          market prices.
+          market prices
         </p>
       </footer>
 
