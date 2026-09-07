@@ -423,7 +423,7 @@ function AuthScreen({
             Welcome back
           </h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Sign in to access your private portfolio and research.
+            Sign in to access your private portfolio and research
           </p>
           <form onSubmit={submit} className="mt-7 space-y-4">
             <div className="space-y-2">
@@ -436,7 +436,7 @@ function AuthScreen({
                 onChange={(event) =>
                   setUsername(event.target.value.toLowerCase())
                 }
-                placeholder="Your.username"
+                placeholder="Your Username"
                 maxLength={50}
               />
             </div>
@@ -449,7 +449,7 @@ function AuthScreen({
                 className="h-11 border-white/10 bg-[#081310]"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="Your password"
+                placeholder="Your Password"
                 maxLength={128}
               />
             </div>
@@ -469,9 +469,6 @@ function AuthScreen({
             </Button>
           </form>
         </section>
-        <p className="mt-5 text-center text-xs text-muted-foreground">
-          Your credentials are sent securely to the Stock Organizer service.
-        </p>
       </div>
     </main>
   );
