@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import {
   BarChart3,
@@ -83,10 +83,88 @@ type DetailState = {
   text?: string;
   error?: string;
 };
-type ChatMessage = { role: 'assistant' | 'user'; text: string };
+type ChatMessage = {
+  id: string;
+  role: 'assistant' | 'user';
+  content: string;
+  createdAt?: string;
+  status?: 'sending' | 'sent' | 'failed';
+};
+type AssistantQuota = {
+  dailyLimit: number;
+  used: number;
+  remaining: number;
+  resetsAt: string;
+};
 
 const STORAGE_KEY = 'stocknub-portfolio-v1';
 const MIGRATION_DISMISSED_KEY = 'stocknub-portfolio-migration-dismissed';
+const ASSISTANT_MAX_INPUT_CHARS = 2000;
+const WELCOME_MESSAGE: ChatMessage = {
+  id: 'assistant-welcome',
+  role: 'assistant',
+  content:
+    'Ask about Indonesian stocks, StockNub analysis and strategies, or positions in your portfolio.',
+};
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function parseQuota(value: unknown): AssistantQuota | null {
+  const quota = objectValue(value);
+  if (!quota) return null;
+  const dailyLimit = Number(quota.daily_limit);
+  const remaining = Number(quota.remaining);
+  const resetsAt = typeof quota.resets_at === 'string' ? quota.resets_at : '';
+  if (
+    !Number.isFinite(dailyLimit) ||
+    !Number.isFinite(remaining) ||
+    !resetsAt
+  )
+    return null;
+  return {
+    dailyLimit: Math.max(0, Math.floor(dailyLimit)),
+    used: Math.max(0, Math.floor(dailyLimit) - Math.floor(remaining)),
+    remaining: Math.max(
+      0,
+      Math.min(Math.floor(dailyLimit), Math.floor(remaining)),
+    ),
+    resetsAt,
+  };
+}
+
+function formatResetTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'midnight WIB';
+  return new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(date);
+}
+
+function formatMessageTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function assistantErrorFrom(response: Response, data: Record<string, unknown>) {
+  if (typeof data.detail === 'string') return data.detail;
+  if (response.status === 429)
+    return "You have reached today's question limit.";
+  if (response.status === 408 || response.status === 504)
+    return 'The research request timed out. Please try again later.';
+  return 'The research assistant is temporarily unavailable.';
+}
 
 async function getStockData(
   action: string,
@@ -141,7 +219,7 @@ function DetailPanel({
         data.entry_strategy ??
         data.hold_strategy;
       if (typeof text !== 'string' || !text)
-        throw new Error('This strategy has not been published yet.');
+        throw new Error('This strategy has not been published yet');
       setCache((current) => ({ ...current, [key]: { status: 'ready', text } }));
     } catch (error) {
       setCache((current) => ({
@@ -233,10 +311,16 @@ function AnalysisWorkspace({
   emptyLabel,
   prominentSelector = false,
 }: {
-  stocks: Array<{ ticker: string; rollingWindow: WindowValue; subtitle?: string }>;
+  stocks: Array<{
+    ticker: string;
+    rollingWindow: WindowValue;
+    subtitle?: string;
+  }>;
   options: [AnalysisOption, AnalysisOption];
   detailCache: Record<string, DetailState>;
-  setDetailCache: React.Dispatch<React.SetStateAction<Record<string, DetailState>>>;
+  setDetailCache: React.Dispatch<
+    React.SetStateAction<Record<string, DetailState>>
+  >;
   emptyLabel: string;
   prominentSelector?: boolean;
 }) {
@@ -258,7 +342,9 @@ function AnalysisWorkspace({
         : current.filter((item) => item !== action),
     );
   };
-  const bothOpen = options.every((option) => openActions.includes(option.action));
+  const bothOpen = options.every((option) =>
+    openActions.includes(option.action),
+  );
   const useEvenColumns = bothOpen || openActions.length === 0;
 
   return (
@@ -268,7 +354,9 @@ function AnalysisWorkspace({
       >
         {!prominentSelector && (
           <div>
-            <Label htmlFor={`stock-select-${options[0].action}`}>Select stock</Label>
+            <Label htmlFor={`stock-select-${options[0].action}`}>
+              Select stock
+            </Label>
             {stock.subtitle && (
               <p className="mt-1 text-sm text-muted-foreground">
                 {stock.subtitle}
@@ -287,7 +375,9 @@ function AnalysisWorkspace({
                 ? 'h-auto min-h-16 w-full justify-between rounded-xl border-primary/20 bg-primary/8 px-5 font-heading text-2xl font-bold tracking-[-0.04em] text-foreground hover:bg-primary/12 sm:w-1/4'
                 : 'h-11 w-full border-white/10 bg-[#0b1613] sm:w-64'
             }
-            aria-label={prominentSelector ? 'Select recommendation stock' : undefined}
+            aria-label={
+              prominentSelector ? 'Select recommendation stock' : undefined
+            }
           >
             <SelectValue placeholder={emptyLabel} />
           </SelectTrigger>
@@ -316,7 +406,9 @@ function AnalysisWorkspace({
               setCache={setDetailCache}
               expanded={isOpen}
               onExpandedChange={(next) => toggle(option.action, next)}
-              className={isOpen ? 'analysis-panel--active' : 'analysis-panel--compact'}
+              className={
+                isOpen ? 'analysis-panel--active' : 'analysis-panel--compact'
+              }
             />
           );
         })}
@@ -481,6 +573,7 @@ function Dashboard({
   user: AuthUser;
   onLogout: () => void;
 }) {
+  const [activeTab, setActiveTab] = useState('recommendations');
   const [rollingWindow, setRollingWindow] = useState<WindowValue>('10dd');
   const [tickers, setTickers] = useState<string[]>([]);
   const [listStatus, setListStatus] = useState<'loading' | 'ready' | 'error'>(
@@ -504,12 +597,14 @@ function Dashboard({
   const [formError, setFormError] = useState('');
   const [question, setQuestion] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: 'assistant',
-      text: 'Ask about a recommended stock, its risk factors, or the positions in your portfolio.',
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
+  const [quota, setQuota] = useState<AssistantQuota | null>(null);
+  const [assistantStatus, setAssistantStatus] = useState<
+    'idle' | 'loading' | 'ready' | 'error'
+  >('idle');
+  const [chatError, setChatError] = useState('');
+  const assistantLoadStarted = useRef(false);
+  const chatEnd = useRef<HTMLDivElement>(null);
 
   const loadRecommendations = useCallback(async () => {
     setListStatus('loading');
@@ -552,12 +647,45 @@ function Dashboard({
     }
   }, [onLogout]);
 
+  const loadAssistant = useCallback(async () => {
+    setAssistantStatus('loading');
+    setChatError('');
+    try {
+      const response = await fetch('/api/assistant/quota', {
+        cache: 'no-store',
+      });
+      const data = objectValue(await response.json().catch(() => ({}))) ?? {};
+      if (response.status === 401) return onLogout();
+      if (!response.ok) throw new Error(assistantErrorFrom(response, data));
+      const nextQuota = parseQuota(data);
+      if (!nextQuota)
+        throw new Error('The assistant returned invalid quota information.');
+      setQuota(nextQuota);
+      setAssistantStatus('ready');
+    } catch (caught) {
+      setAssistantStatus('error');
+      setChatError(
+        caught instanceof Error
+          ? caught.message
+          : 'The research assistant is temporarily unavailable.',
+      );
+    }
+  }, [onLogout]);
+
   useEffect(() => {
     queueMicrotask(() => void loadRecommendations());
   }, [loadRecommendations]);
   useEffect(() => {
     queueMicrotask(() => void loadPortfolio());
   }, [loadPortfolio]);
+  useEffect(() => {
+    if (activeTab !== 'assistant' || assistantLoadStarted.current) return;
+    assistantLoadStarted.current = true;
+    queueMicrotask(() => void loadAssistant());
+  }, [activeTab, loadAssistant]);
+  useEffect(() => {
+    chatEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [chatBusy, messages]);
   useEffect(() => {
     queueMicrotask(() => {
       if (localStorage.getItem(MIGRATION_DISMISSED_KEY)) return;
@@ -772,69 +900,117 @@ function Dashboard({
     setImporting(false);
   };
 
-  const knownTickers = useMemo(
-    () => [...new Set([...tickers, ...positions.map((p) => p.ticker)])],
-    [positions, tickers],
-  );
   const askAssistant = async (event: { preventDefault: () => void }) => {
     event.preventDefault();
     const prompt = question.trim();
-    if (!prompt || chatBusy) return;
-    setQuestion('');
-    setMessages((current) => [...current, { role: 'user', text: prompt }]);
-    setChatBusy(true);
-    const selectedTicker = knownTickers.find((ticker) =>
-      new RegExp(`\\b${ticker}\\b`, 'i').test(prompt),
-    );
-    if (!selectedTicker) {
-      setMessages((current) => [
-        ...current,
-        {
-          role: 'assistant',
-          text: knownTickers.length
-            ? `Name a ticker so I can ground the answer in its report. Available now: ${knownTickers.join(', ')}.`
-            : 'No recommendations are available yet. Refresh the signal board and try again.',
-        },
-      ]);
-      setChatBusy(false);
+    if (
+      !prompt ||
+      chatBusy ||
+      assistantStatus !== 'ready' ||
+      !quota?.remaining
+    )
       return;
-    }
-    const position = positions.find((p) => p.ticker === selectedTicker);
-    const window = position?.rollingWindow ?? rollingWindow;
+
+    const requestId = crypto.randomUUID();
+    const optimisticMessage: ChatMessage = {
+      id: requestId,
+      role: 'user',
+      content: prompt,
+      createdAt: new Date().toISOString(),
+      status: 'sending',
+    };
+    setQuestion('');
+    setChatError('');
+    setMessages((current) => [...current, optimisticMessage]);
+    setChatBusy(true);
     try {
-      const data = await getStockData('report', selectedTicker, window);
-      const report = typeof data.report === 'string' ? data.report : '';
-      const riskMatch = report.match(
-        /## (?:10\. Risk matrix and controls|Risks?[^\n]*)\n([\s\S]*?)(?=\n## |$)/i,
-      );
-      const summaryMatch = report.match(
-        /## (?:11\. Final assessment|Integrated assessment|Final assessment)\n([\s\S]*?)(?=\n## |$)/i,
-      );
-      const wantsRisk = /risk|downside|stop|loss/i.test(prompt);
-      const excerpt =
-        (wantsRisk ? riskMatch?.[1] : summaryMatch?.[1]) ??
-        report.slice(0, 2400);
+      const response = await fetch('/api/assistant/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': requestId,
+        },
+        body: JSON.stringify({ content: prompt }),
+      });
+      const data = objectValue(await response.json().catch(() => ({}))) ?? {};
+      const nextQuota = parseQuota(data.quota);
+      if (nextQuota) setQuota(nextQuota);
+      if (response.status === 401) return onLogout();
+      if (!response.ok) {
+        if (response.status === 429 && !nextQuota)
+          setQuota((current) =>
+            current
+              ? { ...current, used: current.dailyLimit, remaining: 0 }
+              : null,
+          );
+        throw new Error(assistantErrorFrom(response, data));
+      }
+
+      const rawMessage = objectValue(data.message);
+      if (
+        !rawMessage ||
+        rawMessage.role !== 'assistant' ||
+        typeof rawMessage.content !== 'string'
+      )
+        throw new Error('The assistant returned an unreadable answer.');
+      const answerContent = rawMessage.content;
+
       setMessages((current) => [
-        ...current,
+        ...current.map((message) =>
+          message.id === requestId
+            ? { ...message, status: 'sent' as const }
+            : message,
+        ),
         {
+          id:
+            typeof rawMessage.id === 'string'
+              ? rawMessage.id
+              : crypto.randomUUID(),
           role: 'assistant',
-          text: `### ${selectedTicker} · ${WINDOW_LABELS[window]}\n\n${excerpt.trim()}\n\n*Answer grounded in the latest published StockNub report.*`,
+          content: answerContent,
+          createdAt:
+            typeof rawMessage.created_at === 'string'
+              ? rawMessage.created_at
+              : new Date().toISOString(),
+          status: 'sent',
         },
       ]);
-    } catch (error) {
-      setMessages((current) => [
-        ...current,
-        {
-          role: 'assistant',
-          text:
-            error instanceof Error
-              ? error.message
-              : 'I could not retrieve that report.',
-        },
-      ]);
+    } catch (caught) {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === requestId
+            ? { ...message, status: 'failed' as const }
+            : message,
+        ),
+      );
+      setChatError(
+        caught instanceof Error
+          ? caught.message
+          : 'The research assistant is temporarily unavailable.',
+      );
+    } finally {
+      setChatBusy(false);
     }
-    setChatBusy(false);
   };
+
+  const clearAssistantChat = () => {
+    if (chatBusy) return;
+    setChatError('');
+    setMessages([WELCOME_MESSAGE]);
+    setQuestion('');
+  };
+
+  const reloadAssistant = () => {
+    assistantLoadStarted.current = true;
+    void loadAssistant();
+  };
+
+  const quotaExhausted = quota?.remaining === 0;
+  const assistantBusy = chatBusy;
+  const composerDisabled =
+    assistantStatus !== 'ready' ||
+    assistantBusy ||
+    quotaExhausted;
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -864,7 +1040,8 @@ function Dashboard({
       </header>
 
       <Tabs
-        defaultValue="recommendations"
+        value={activeTab}
+        onValueChange={(value) => value && setActiveTab(value)}
         className="mx-auto max-w-[1180px] px-5 py-6 md:px-8 md:py-9"
       >
         <TabsList
@@ -940,12 +1117,8 @@ function Dashboard({
                     </div>
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="5dd">
-                      5–10 Trading Sessions
-                    </SelectItem>
-                    <SelectItem value="10dd">
-                      10–20 Trading Sessions
-                    </SelectItem>
+                    <SelectItem value="5dd">5–10 Trading Sessions</SelectItem>
+                    <SelectItem value="10dd">10–20 Trading Sessions</SelectItem>
                   </SelectContent>
                 </Select>
 
@@ -976,7 +1149,10 @@ function Dashboard({
                 {listStatus === 'loading' && (
                   <div className="space-y-3">
                     {[0, 1, 2].map((item) => (
-                      <Skeleton key={item} className="h-40 w-full rounded-2xl" />
+                      <Skeleton
+                        key={item}
+                        className="h-40 w-full rounded-2xl"
+                      />
                     ))}
                   </div>
                 )}
@@ -1176,7 +1352,7 @@ function Dashboard({
                 <EmptyTitle>Your portfolio is empty</EmptyTitle>
                 <EmptyDescription>
                   Add your first stock above to keep its hold strategy and
-                  analysis close at hand.
+                  analysis close at hand
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
@@ -1247,70 +1423,188 @@ function Dashboard({
         </TabsContent>
 
         <TabsContent value="assistant" className="pt-7">
-          <div className="mb-6">
-            <p className="mb-2 text-sm font-semibold uppercase tracking-[0.18em] text-primary">
-              Research desk
-            </p>
-            <h1 className="font-heading text-3xl font-bold tracking-[-0.03em] md:text-4xl">
-              Analysis assistant
-            </h1>
+          <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+            <div>
+              <p className="mb-2 text-sm font-semibold uppercase tracking-[0.18em] text-primary">
+                Research desk
+              </p>
+              <h1 className="font-heading text-3xl font-bold tracking-[-0.03em] md:text-4xl">
+                AI research assistant
+              </h1>
+            </div>
+            <Button
+              variant="outline"
+              onClick={clearAssistantChat}
+              disabled={assistantBusy || messages.length === 1}
+            >
+              <Trash2 /> Clear chat
+            </Button>
           </div>
           <section className="overflow-hidden rounded-2xl border border-white/8 bg-card">
-            <div className="min-h-[420px] space-y-5 p-5 md:p-7">
-              {messages.map((message, index) => (
+            <div className="border-b border-white/8 bg-[#0a1512] px-5 py-4 md:px-7">
+              {assistantStatus === 'loading' || assistantStatus === 'idle' ? (
+                <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                  <LoaderCircle className="size-4 animate-spin" /> Loading daily
+                  allowance…
+                </div>
+              ) : assistantStatus === 'error' || !quota ? (
+                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                  <div className="flex items-center gap-2 text-sm text-amber-200">
+                    <CircleAlert className="size-4" /> Daily allowance is
+                    unavailable.
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={reloadAssistant}>
+                    <RefreshCw /> Try again
+                  </Button>
+                </div>
+              ) : (
+                <output
+                  className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"
+                  aria-live="polite"
+                  aria-label={`${quota.remaining} of ${quota.dailyLimit} questions remaining today`}
+                >
+                  <div>
+                    <p className="text-sm font-semibold">
+                      {quota.remaining} of {quota.dailyLimit} questions
+                      remaining today
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground normal-case">
+                      Resets {formatResetTime(quota.resetsAt)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5" aria-hidden="true">
+                    {Array.from({ length: quota.dailyLimit }, (_, index) => (
+                      <span
+                        key={index}
+                        className={`h-2.5 w-7 rounded-full ${index < quota.remaining ? 'bg-primary' : 'bg-white/10'}`}
+                      />
+                    ))}
+                  </div>
+                </output>
+              )}
+            </div>
+            <div className="max-h-[620px] min-h-[420px] space-y-5 overflow-y-auto p-5 md:p-7">
+              {messages.map((message) => (
                 <div
-                  key={index}
+                  key={message.id}
                   className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
                     className={`max-w-[88%] rounded-2xl px-4 py-3 md:max-w-[72%] ${message.role === 'user' ? 'bg-primary text-primary-foreground' : 'border border-white/8 bg-[#081310]'}`}
                   >
-                    <div className="markdown chat-markdown">
-                      <ReactMarkdown>{message.text}</ReactMarkdown>
+                    <div className="markdown chat-markdown normal-case">
+                      <ReactMarkdown>{message.content}</ReactMarkdown>
                     </div>
+                    {(message.createdAt || message.status) && (
+                      <p
+                        className={`mt-2 text-[11px] normal-case ${message.role === 'user' ? 'text-primary-foreground/65' : 'text-muted-foreground'}`}
+                      >
+                        {message.createdAt &&
+                          formatMessageTime(message.createdAt)}
+                        {message.status === 'sending' && ' · Sending…'}
+                        {message.status === 'failed' && ' · No answer'}
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}
-              {chatBusy && (
+              {assistantBusy && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <LoaderCircle className="size-4 animate-spin" /> Reading the
-                  latest report…
+                  <LoaderCircle className="size-4 animate-spin" /> Researching
+                  with StockNub data…
                 </div>
               )}
+              <div ref={chatEnd} />
             </div>
             <div className="border-t border-white/8 p-4 md:p-5">
+              {chatError && (
+                <div
+                  className="mb-4 flex items-start gap-2 rounded-xl border border-amber-400/20 bg-amber-400/8 p-3 text-sm text-amber-100 normal-case"
+                  role="alert"
+                >
+                  <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-300" />
+                  <p>{chatError}</p>
+                </div>
+              )}
+              {quotaExhausted && quota && (
+                <div className="mb-4 flex items-start gap-3 rounded-xl border border-white/10 bg-[#081310] p-4">
+                  <LockKeyhole className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm font-medium">
+                      Daily question limit reached
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground normal-case">
+                      You can ask more questions after{' '}
+                      {formatResetTime(quota.resetsAt)}.
+                    </p>
+                  </div>
+                </div>
+              )}
               <div className="mb-3 flex flex-wrap gap-2">
-                {['What are the risks for BNBR?', 'Summarize BULL'].map(
-                  (suggestion) => (
-                    <button
-                      key={suggestion}
-                      type="button"
-                      onClick={() => setQuestion(suggestion)}
-                      className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary/30 hover:text-primary"
-                    >
-                      {suggestion}
-                    </button>
-                  ),
-                )}
+                {[
+                  'What risks should I review in my portfolio?',
+                  'Compare the outlook for my portfolio positions',
+                ].map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    onClick={() => setQuestion(suggestion)}
+                    disabled={composerDisabled}
+                    className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary/30 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
               </div>
               <form onSubmit={askAssistant} className="flex items-end gap-2">
                 <Textarea
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
-                  placeholder="Ask about a ticker, risk, or outlook…"
-                  className="min-h-12 resize-none border-white/10 bg-[#081310]"
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'Enter' &&
+                      !event.shiftKey &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  placeholder={
+                    quotaExhausted
+                      ? 'Daily question limit reached.'
+                      : 'Ask about an Indonesian stock, strategy, or your portfolio…'
+                  }
+                  className="min-h-12 resize-none border-white/10 bg-[#081310] normal-case"
                   aria-label="Question for the research assistant"
+                  aria-describedby="assistant-composer-note"
+                  maxLength={ASSISTANT_MAX_INPUT_CHARS}
+                  disabled={composerDisabled}
                 />
                 <Button
                   type="submit"
                   size="icon-lg"
                   className="size-12"
-                  disabled={!question.trim() || chatBusy}
+                  disabled={!question.trim() || composerDisabled}
                   aria-label="Send question"
                 >
-                  <Send />
+                  {assistantBusy ? (
+                    <LoaderCircle className="animate-spin" />
+                  ) : (
+                    <Send />
+                  )}
                 </Button>
               </form>
+              <div
+                id="assistant-composer-note"
+                className="mt-3 flex flex-col gap-1 text-xs text-muted-foreground normal-case sm:flex-row sm:items-center sm:justify-between"
+              >
+                <span>
+                  Each question is independent · Enter to send · Shift+Enter
+                  for a new line
+                </span>
+                <span>AI-generated · verify important decisions</span>
+              </div>
             </div>
           </section>
         </TabsContent>

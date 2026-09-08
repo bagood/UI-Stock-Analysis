@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: 'StockNub Insights',
-  description: 'IDX stock recommendations, portfolio strategies, and research assistance.',
+  description: 'IDX stock recommendations, portfolio strategies, and research assistance',
 };
 
 export default function RootLayout({
