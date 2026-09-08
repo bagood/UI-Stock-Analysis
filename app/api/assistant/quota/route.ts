@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
+import { safeQuotaResponse } from '@/lib/server/assistant';
 import {
-  assistantFetch,
-  readAssistantJson,
-  safeAssistantError,
-  safeQuotaResponse,
-} from '@/lib/server/assistant';
-import { SESSION_COOKIE } from '@/lib/server/organizer';
+  organizerFetch,
+  readJson,
+  SESSION_COOKIE,
+} from '@/lib/server/organizer';
 import { getSessionToken } from '@/lib/server/session';
 
 function unauthorized() {
@@ -22,13 +21,22 @@ export async function GET() {
   if (!token) return unauthorized();
 
   try {
-    const upstream = await assistantFetch('/assistant/quota', {}, token);
-    const data = await readAssistantJson(upstream);
+    const upstream = await organizerFetch(
+      '/chat-quota',
+      { cache: 'no-store' },
+      token,
+    );
+    const rawData = await readJson(upstream);
+    const data = Array.isArray(rawData) ? {} : rawData;
     if (upstream.status === 401) return unauthorized();
     if (!upstream.ok)
-      return NextResponse.json(safeAssistantError(upstream.status, data), {
-        status: upstream.status,
-      });
+      return NextResponse.json(
+        {
+          detail: 'Daily allowance information is temporarily unavailable.',
+          error_code: 'QUOTA_SERVICE_UNAVAILABLE',
+        },
+        { status: upstream.status },
+      );
     const response = safeQuotaResponse(data);
     if (!response)
       return NextResponse.json(

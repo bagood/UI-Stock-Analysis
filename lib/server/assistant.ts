@@ -41,13 +41,14 @@ function safeQuota(value: unknown) {
   const quota = objectValue(value);
   if (
     !quota ||
+    typeof quota.allowed !== 'boolean' ||
     typeof quota.daily_limit !== 'number' ||
     typeof quota.remaining !== 'number' ||
     typeof quota.resets_at !== 'string'
   )
     return null;
   return {
-    allowed: quota.allowed !== false && quota.remaining > 0,
+    allowed: quota.allowed,
     daily_limit: quota.daily_limit,
     remaining: quota.remaining,
     resets_at: quota.resets_at,

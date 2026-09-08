@@ -91,6 +91,7 @@ type ChatMessage = {
   status?: 'sending' | 'sent' | 'failed';
 };
 type AssistantQuota = {
+  allowed: boolean;
   dailyLimit: number;
   used: number;
   remaining: number;
@@ -116,16 +117,19 @@ function objectValue(value: unknown): Record<string, unknown> | null {
 function parseQuota(value: unknown): AssistantQuota | null {
   const quota = objectValue(value);
   if (!quota) return null;
+  const allowed = quota.allowed;
   const dailyLimit = Number(quota.daily_limit);
   const remaining = Number(quota.remaining);
   const resetsAt = typeof quota.resets_at === 'string' ? quota.resets_at : '';
   if (
+    typeof allowed !== 'boolean' ||
     !Number.isFinite(dailyLimit) ||
     !Number.isFinite(remaining) ||
     !resetsAt
   )
     return null;
   return {
+    allowed,
     dailyLimit: Math.max(0, Math.floor(dailyLimit)),
     used: Math.max(0, Math.floor(dailyLimit) - Math.floor(remaining)),
     remaining: Math.max(
@@ -907,7 +911,7 @@ function Dashboard({
       !prompt ||
       chatBusy ||
       assistantStatus !== 'ready' ||
-      !quota?.remaining
+      quota?.allowed !== true
     )
       return;
 
@@ -940,7 +944,12 @@ function Dashboard({
         if (response.status === 429 && !nextQuota)
           setQuota((current) =>
             current
-              ? { ...current, used: current.dailyLimit, remaining: 0 }
+              ? {
+                  ...current,
+                  allowed: false,
+                  used: current.dailyLimit,
+                  remaining: 0,
+                }
               : null,
           );
         throw new Error(assistantErrorFrom(response, data));
@@ -1005,7 +1014,7 @@ function Dashboard({
     void loadAssistant();
   };
 
-  const quotaExhausted = quota?.remaining === 0;
+  const quotaExhausted = quota?.allowed === false;
   const assistantBusy = chatBusy;
   const composerDisabled =
     assistantStatus !== 'ready' ||
