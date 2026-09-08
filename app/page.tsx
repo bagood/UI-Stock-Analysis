@@ -651,9 +651,9 @@ function Dashboard({
     }
   }, [onLogout]);
 
-  const loadAssistant = useCallback(async () => {
+  const loadAssistant = useCallback(async (preserveError = false) => {
     setAssistantStatus('loading');
-    setChatError('');
+    if (!preserveError) setChatError('');
     try {
       const response = await fetch('/api/assistant/quota', {
         cache: 'no-store',
@@ -668,11 +668,12 @@ function Dashboard({
       setAssistantStatus('ready');
     } catch (caught) {
       setAssistantStatus('error');
-      setChatError(
-        caught instanceof Error
-          ? caught.message
-          : 'The research assistant is temporarily unavailable.',
-      );
+      if (!preserveError)
+        setChatError(
+          caught instanceof Error
+            ? caught.message
+            : 'The research assistant is temporarily unavailable.',
+        );
     }
   }, [onLogout]);
 
@@ -930,11 +931,8 @@ function Dashboard({
     try {
       const response = await fetch('/api/assistant/messages', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': requestId,
-        },
-        body: JSON.stringify({ content: prompt }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: prompt }),
       });
       const data = objectValue(await response.json().catch(() => ({}))) ?? {};
       const nextQuota = parseQuota(data.quota);
@@ -998,6 +996,7 @@ function Dashboard({
           : 'The research assistant is temporarily unavailable.',
       );
     } finally {
+      await loadAssistant(true);
       setChatBusy(false);
     }
   };
