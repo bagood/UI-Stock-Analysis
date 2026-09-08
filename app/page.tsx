@@ -1129,28 +1129,6 @@ function Dashboard({
                     <SelectItem value="10dd">10–20 Trading Sessions</SelectItem>
                   </SelectContent>
                 </Select>
-
-                <div className="flex gap-3 md:shrink-0">
-                  <Button
-                    variant="outline"
-                    className="h-auto min-h-20 flex-1 justify-between rounded-2xl border-primary/20 bg-primary/8 px-5 text-left hover:bg-primary/15 md:min-h-24 md:w-44 md:flex-none"
-                    aria-label="Refresh recommendations"
-                    onClick={() => void loadRecommendations()}
-                    disabled={listStatus === 'loading'}
-                  >
-                    <span>
-                      <span className="block font-mono text-xs uppercase tracking-[0.16em] text-primary">
-                        Signals
-                      </span>
-                      <span className="mt-1 block font-heading text-xl font-bold tracking-[-0.03em] text-foreground">
-                        Refresh
-                      </span>
-                    </span>
-                    <RefreshCw
-                      className={`size-5 text-primary ${listStatus === 'loading' ? 'animate-spin' : ''}`}
-                    />
-                  </Button>
-                </div>
               </div>
 
               <div className="mt-7">
@@ -1548,22 +1526,6 @@ function Dashboard({
                   </div>
                 </div>
               )}
-              <div className="mb-3 flex flex-wrap gap-2">
-                {[
-                  'What risks should I review in my portfolio?',
-                  'Compare the outlook for my portfolio positions',
-                ].map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    onClick={() => setQuestion(suggestion)}
-                    disabled={composerDisabled}
-                    className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary/30 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
               <form onSubmit={askAssistant} className="flex items-end gap-2">
                 <Textarea
                   value={question}
@@ -1581,11 +1543,10 @@ function Dashboard({
                   placeholder={
                     quotaExhausted
                       ? 'Daily question limit reached.'
-                      : 'Ask about an Indonesian stock, strategy, or your portfolio…'
+                      : undefined
                   }
                   className="min-h-12 resize-none border-white/10 bg-[#081310] normal-case"
                   aria-label="Question for the research assistant"
-                  aria-describedby="assistant-composer-note"
                   maxLength={ASSISTANT_MAX_INPUT_CHARS}
                   disabled={composerDisabled}
                 />
@@ -1603,16 +1564,6 @@ function Dashboard({
                   )}
                 </Button>
               </form>
-              <div
-                id="assistant-composer-note"
-                className="mt-3 flex flex-col gap-1 text-xs text-muted-foreground normal-case sm:flex-row sm:items-center sm:justify-between"
-              >
-                <span>
-                  Each question is independent · Enter to send · Shift+Enter
-                  for a new line
-                </span>
-                <span>AI-generated · verify important decisions</span>
-              </div>
             </div>
           </section>
         </TabsContent>

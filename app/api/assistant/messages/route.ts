@@ -66,12 +66,12 @@ export async function POST(request: Request) {
         { status: 400 },
       );
 
+    // The assistant's /chat endpoint consumes the quota when it successfully
+    // processes a message. Only check eligibility here so one message cannot
+    // be charged once by the organizer and again by the assistant.
     const quotaUpstream = await organizerFetch(
-      '/chat-quota/consume',
-      {
-        method: 'POST',
-        cache: 'no-store',
-      },
+      '/chat-quota',
+      { cache: 'no-store' },
       token,
     );
     const rawQuotaData = await readJson(quotaUpstream);
@@ -111,6 +111,15 @@ export async function POST(request: Request) {
         },
         { status: 502 },
       );
+    if (!quota.allowed)
+      return NextResponse.json(
+        {
+          detail: "You have reached today's question limit.",
+          error_code: 'DAILY_QUOTA_EXCEEDED',
+          quota,
+        },
+        { status: 429 },
+      );
 
     const assistantUpstream = await assistantFetch(
       '/chat',
@@ -148,13 +157,28 @@ export async function POST(request: Request) {
         { status: 502 },
       );
 
+    // /chat has now performed the single quota deduction. Read the updated
+    // value so the client immediately displays the authoritative remainder.
+    const updatedQuotaUpstream = await organizerFetch(
+      '/chat-quota',
+      { cache: 'no-store' },
+      token,
+    );
+    const rawUpdatedQuotaData = await readJson(updatedQuotaUpstream);
+    const updatedQuotaData = Array.isArray(rawUpdatedQuotaData)
+      ? {}
+      : rawUpdatedQuotaData;
+    const updatedQuota = updatedQuotaUpstream.ok
+      ? safeQuotaResponse(updatedQuotaData)
+      : null;
+
     return NextResponse.json({
       message: {
         role: 'assistant',
         content: assistantData.reply,
         created_at: new Date().toISOString(),
       },
-      quota,
+      quota: updatedQuota ?? quota,
     });
   } catch (error) {
     if (error instanceof SyntaxError)
