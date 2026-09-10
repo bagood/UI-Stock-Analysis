@@ -4,6 +4,8 @@ import {
   assistantInputLimit,
   isAssistantTimeout,
   readAssistantJson,
+  safeChatHistoryResponse,
+  safeChatResponse,
   safeQuotaResponse,
 } from '@/lib/server/assistant';
 import {
@@ -13,12 +15,22 @@ import {
 } from '@/lib/server/organizer';
 import { getSessionToken, isTrustedOrigin } from '@/lib/server/session';
 
-const MAX_BODY_BYTES = 8_192;
+const MAX_BODY_BYTES = 65_536;
+
+function privateHeaders(upstream?: Response) {
+  const headers = new Headers({
+    'Cache-Control': 'private, no-store',
+    Vary: 'Cookie',
+  });
+  const retryAfter = upstream?.headers.get('retry-after');
+  if (retryAfter) headers.set('Retry-After', retryAfter);
+  return headers;
+}
 
 function unauthorized() {
   const response = NextResponse.json(
     { detail: 'Your session has expired.' },
-    { status: 401 },
+    { status: 401, headers: privateHeaders() },
   );
   response.cookies.set(SESSION_COOKIE, '', { path: '/', maxAge: 0 });
   return response;
@@ -28,6 +40,72 @@ function recordValue(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function upstreamDetail(data: Record<string, unknown>, fallback: string) {
+  if (typeof data.detail === 'string') return data.detail;
+  if (Array.isArray(data.detail)) {
+    const details = data.detail
+      .map((item) => {
+        const row = recordValue(item);
+        return typeof row?.msg === 'string' ? row.msg : '';
+      })
+      .filter(Boolean)
+      .join(' ');
+    if (details) return details;
+  }
+  const detail = recordValue(data.detail);
+  return typeof detail?.message === 'string' ? detail.message : fallback;
+}
+
+export async function GET() {
+  const token = await getSessionToken();
+  if (!token) return unauthorized();
+
+  try {
+    const upstream = await organizerFetch(
+      '/chat-history',
+      { cache: 'no-store' },
+      token,
+    );
+    const rawData = await readJson(upstream);
+    const data = Array.isArray(rawData) ? {} : rawData;
+    if (upstream.status === 401) return unauthorized();
+    if (!upstream.ok)
+      return NextResponse.json(
+        {
+          detail: upstreamDetail(
+            data,
+            'Chat history is temporarily unavailable.',
+          ),
+          error_code:
+            upstream.status === 503
+              ? 'CHAT_HISTORY_UNAVAILABLE'
+              : 'CHAT_HISTORY_UPSTREAM_ERROR',
+        },
+        { status: upstream.status, headers: privateHeaders(upstream) },
+      );
+
+    const history = safeChatHistoryResponse(data);
+    if (!history)
+      return NextResponse.json(
+        {
+          detail: 'The chat history service returned an unreadable response.',
+          error_code: 'INVALID_CHAT_HISTORY_RESPONSE',
+        },
+        { status: 502, headers: privateHeaders() },
+      );
+
+    return NextResponse.json(history, { headers: privateHeaders() });
+  } catch {
+    return NextResponse.json(
+      {
+        detail: 'Chat history is temporarily unavailable.',
+        error_code: 'CHAT_HISTORY_UNAVAILABLE',
+      },
+      { status: 503, headers: privateHeaders() },
+    );
+  }
 }
 
 export async function POST(request: Request) {
@@ -66,62 +144,7 @@ export async function POST(request: Request) {
         { status: 400 },
       );
 
-    // The assistant's /chat endpoint consumes the quota when it successfully
-    // processes a message. Only check eligibility here so one message cannot
-    // be charged once by the organizer and again by the assistant.
-    const quotaUpstream = await organizerFetch(
-      '/chat-quota',
-      { cache: 'no-store' },
-      token,
-    );
-    const rawQuotaData = await readJson(quotaUpstream);
-    const quotaData = Array.isArray(rawQuotaData) ? {} : rawQuotaData;
-    if (quotaUpstream.status === 401) return unauthorized();
-    if (!quotaUpstream.ok) {
-      const headers = new Headers();
-      const retryAfter = quotaUpstream.headers.get('retry-after');
-      if (retryAfter) headers.set('Retry-After', retryAfter);
-
-      const detail = recordValue(quotaData.detail);
-      const quota = detail
-        ? safeQuotaResponse({ ...detail, allowed: false })
-        : null;
-      return NextResponse.json(
-        {
-          detail:
-            quotaUpstream.status === 429
-              ? "You have reached today's question limit."
-              : 'Daily allowance information is temporarily unavailable.',
-          error_code:
-            quotaUpstream.status === 429
-              ? 'DAILY_QUOTA_EXCEEDED'
-              : 'QUOTA_SERVICE_UNAVAILABLE',
-          ...(quota ? { quota } : {}),
-        },
-        { status: quotaUpstream.status, headers },
-      );
-    }
-
-    const quota = safeQuotaResponse(quotaData);
-    if (!quota)
-      return NextResponse.json(
-        {
-          detail: 'Daily allowance information is temporarily unavailable.',
-          error_code: 'INVALID_QUOTA_RESPONSE',
-        },
-        { status: 502 },
-      );
-    if (!quota.allowed)
-      return NextResponse.json(
-        {
-          detail: "You have reached today's question limit.",
-          error_code: 'DAILY_QUOTA_EXCEEDED',
-          quota,
-        },
-        { status: 429 },
-      );
-
-    const assistantUpstream = await assistantFetch(
+    const upstream = await assistantFetch(
       '/chat',
       {
         method: 'POST',
@@ -129,57 +152,49 @@ export async function POST(request: Request) {
       },
       token,
     );
-    const assistantData = await readAssistantJson(assistantUpstream);
-    if (assistantUpstream.status === 401) return unauthorized();
-    if (!assistantUpstream.ok)
+    const data = await readAssistantJson(upstream);
+    if (upstream.status === 401) return unauthorized();
+    if (!upstream.ok) {
+      const quota = safeQuotaResponse(data.quota);
+      const status = upstream.status;
+      const fallback =
+        status === 422
+          ? 'The question is not valid.'
+          : status === 429
+            ? "You have reached today's question limit."
+            : status === 502
+              ? 'The generated response could not be completed or saved.'
+              : status === 504
+                ? 'The research request timed out. Please try again later.'
+                : 'The research assistant is temporarily unavailable.';
       return NextResponse.json(
         {
-          detail:
-            assistantUpstream.status === 408 || assistantUpstream.status === 504
-              ? 'The research request timed out. Please try again later.'
-              : 'The research assistant is temporarily unavailable.',
+          detail: upstreamDetail(data, fallback),
           error_code:
-            assistantUpstream.status === 408 || assistantUpstream.status === 504
-              ? 'ASSISTANT_TIMEOUT'
-              : 'ASSISTANT_UPSTREAM_ERROR',
-          quota,
+            typeof data.error_code === 'string'
+              ? data.error_code
+              : status === 429
+                ? 'DAILY_QUOTA_EXCEEDED'
+                : status === 504
+                  ? 'ASSISTANT_TIMEOUT'
+                  : 'ASSISTANT_UPSTREAM_ERROR',
+          ...(quota ? { quota } : {}),
         },
-        { status: assistantUpstream.status },
+        { status, headers: privateHeaders(upstream) },
       );
+    }
 
-    if (typeof assistantData.reply !== 'string' || !assistantData.reply.trim())
+    const chat = safeChatResponse(data);
+    if (!chat)
       return NextResponse.json(
         {
           detail: 'The research assistant returned an unreadable response.',
-          error_code: 'ASSISTANT_UPSTREAM_ERROR',
-          quota,
+          error_code: 'INVALID_CHAT_RESPONSE',
         },
-        { status: 502 },
+        { status: 502, headers: privateHeaders() },
       );
 
-    // /chat has now performed the single quota deduction. Read the updated
-    // value so the client immediately displays the authoritative remainder.
-    const updatedQuotaUpstream = await organizerFetch(
-      '/chat-quota',
-      { cache: 'no-store' },
-      token,
-    );
-    const rawUpdatedQuotaData = await readJson(updatedQuotaUpstream);
-    const updatedQuotaData = Array.isArray(rawUpdatedQuotaData)
-      ? {}
-      : rawUpdatedQuotaData;
-    const updatedQuota = updatedQuotaUpstream.ok
-      ? safeQuotaResponse(updatedQuotaData)
-      : null;
-
-    return NextResponse.json({
-      message: {
-        role: 'assistant',
-        content: assistantData.reply,
-        created_at: new Date().toISOString(),
-      },
-      quota: updatedQuota ?? quota,
-    });
+    return NextResponse.json(chat, { headers: privateHeaders() });
   } catch (error) {
     if (error instanceof SyntaxError)
       return NextResponse.json(
@@ -192,14 +207,14 @@ export async function POST(request: Request) {
           detail: 'The research request timed out. Please try again later.',
           error_code: 'ASSISTANT_TIMEOUT',
         },
-        { status: 504 },
+        { status: 504, headers: privateHeaders() },
       );
     return NextResponse.json(
       {
         detail: 'The research assistant is temporarily unavailable.',
         error_code: 'ASSISTANT_UPSTREAM_ERROR',
       },
-      { status: 502 },
+      { status: 503, headers: privateHeaders() },
     );
   }
 }

@@ -85,6 +85,7 @@ type DetailState = {
 };
 type ChatMessage = {
   id: string;
+  clientMessageId?: string | null;
   role: 'assistant' | 'user';
   content: string;
   createdAt?: string;
@@ -100,7 +101,7 @@ type AssistantQuota = {
 
 const STORAGE_KEY = 'stocknub-portfolio-v1';
 const MIGRATION_DISMISSED_KEY = 'stocknub-portfolio-migration-dismissed';
-const ASSISTANT_MAX_INPUT_CHARS = 2000;
+const ASSISTANT_MAX_INPUT_CHARS = 10_000;
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'assistant-welcome',
   role: 'assistant',
@@ -138,6 +139,34 @@ function parseQuota(value: unknown): AssistantQuota | null {
     ),
     resetsAt,
   };
+}
+
+function parseChatMessages(value: unknown): ChatMessage[] | null {
+  if (!Array.isArray(value)) return null;
+  const messages: ChatMessage[] = [];
+  for (const item of value) {
+    const message = objectValue(item);
+    if (
+      !message ||
+      typeof message.id !== 'string' ||
+      (message.client_message_id !== null &&
+        typeof message.client_message_id !== 'string') ||
+      (message.role !== 'user' && message.role !== 'assistant') ||
+      typeof message.content !== 'string' ||
+      typeof message.created_at !== 'string' ||
+      !Number.isFinite(Date.parse(message.created_at))
+    )
+      return null;
+    messages.push({
+      id: message.id,
+      clientMessageId: message.client_message_id,
+      role: message.role,
+      content: message.content,
+      createdAt: message.created_at,
+      status: 'sent',
+    });
+  }
+  return messages;
 }
 
 function formatResetTime(value: string) {
@@ -603,6 +632,9 @@ function Dashboard({
   const [chatBusy, setChatBusy] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
   const [quota, setQuota] = useState<AssistantQuota | null>(null);
+  const [assistantExpiresAt, setAssistantExpiresAt] = useState<string | null>(
+    null,
+  );
   const [assistantStatus, setAssistantStatus] = useState<
     'idle' | 'loading' | 'ready' | 'error'
   >('idle');
@@ -651,29 +683,43 @@ function Dashboard({
     }
   }, [onLogout]);
 
-  const loadAssistant = useCallback(async (preserveError = false) => {
+  const loadAssistantHistory = useCallback(async () => {
     setAssistantStatus('loading');
-    if (!preserveError) setChatError('');
+    setChatError('');
     try {
-      const response = await fetch('/api/assistant/quota', {
+      const response = await fetch('/api/assistant/messages', {
         cache: 'no-store',
       });
       const data = objectValue(await response.json().catch(() => ({}))) ?? {};
       if (response.status === 401) return onLogout();
       if (!response.ok) throw new Error(assistantErrorFrom(response, data));
-      const nextQuota = parseQuota(data);
-      if (!nextQuota)
-        throw new Error('The assistant returned invalid quota information.');
+      const conversation = objectValue(data.conversation);
+      const nextQuota = parseQuota(data.quota);
+      const restoredMessages = parseChatMessages(conversation?.messages);
+      const expiresAt = conversation?.expires_at;
+      if (
+        !conversation ||
+        (conversation.id !== null && typeof conversation.id !== 'string') ||
+        typeof conversation.business_date !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(conversation.business_date) ||
+        conversation.timezone !== 'Asia/Jakarta' ||
+        !nextQuota ||
+        !restoredMessages ||
+        typeof expiresAt !== 'string' ||
+        !Number.isFinite(Date.parse(expiresAt))
+      )
+        throw new Error('The assistant returned invalid conversation history.');
+      setMessages([WELCOME_MESSAGE, ...restoredMessages]);
       setQuota(nextQuota);
+      setAssistantExpiresAt(expiresAt);
       setAssistantStatus('ready');
     } catch (caught) {
       setAssistantStatus('error');
-      if (!preserveError)
-        setChatError(
-          caught instanceof Error
-            ? caught.message
-            : 'The research assistant is temporarily unavailable.',
-        );
+      setChatError(
+        caught instanceof Error
+          ? caught.message
+          : 'The research assistant is temporarily unavailable.',
+      );
     }
   }, [onLogout]);
 
@@ -686,8 +732,19 @@ function Dashboard({
   useEffect(() => {
     if (activeTab !== 'assistant' || assistantLoadStarted.current) return;
     assistantLoadStarted.current = true;
-    queueMicrotask(() => void loadAssistant());
-  }, [activeTab, loadAssistant]);
+    queueMicrotask(() => void loadAssistantHistory());
+  }, [activeTab, loadAssistantHistory]);
+  useEffect(() => {
+    if (!assistantExpiresAt || chatBusy) return;
+    const expiresAt = Date.parse(assistantExpiresAt);
+    if (!Number.isFinite(expiresAt)) return;
+    const delay = Math.max(
+      1_000,
+      Math.min(expiresAt - Date.now() + 250, 2_147_000_000),
+    );
+    const timeout = window.setTimeout(() => void loadAssistantHistory(), delay);
+    return () => window.clearTimeout(timeout);
+  }, [assistantExpiresAt, chatBusy, loadAssistantHistory]);
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [chatBusy, messages]);
@@ -953,35 +1010,29 @@ function Dashboard({
         throw new Error(assistantErrorFrom(response, data));
       }
 
-      const rawMessage = objectValue(data.message);
+      const persistedTurn = parseChatMessages(data.messages);
       if (
-        !rawMessage ||
-        rawMessage.role !== 'assistant' ||
-        typeof rawMessage.content !== 'string'
+        !persistedTurn ||
+        persistedTurn.length !== 2 ||
+        persistedTurn[0].role !== 'user' ||
+        persistedTurn[1].role !== 'assistant'
       )
         throw new Error('The assistant returned an unreadable answer.');
-      const answerContent = rawMessage.content;
 
-      setMessages((current) => [
-        ...current.map((message) =>
-          message.id === requestId
-            ? { ...message, status: 'sent' as const }
-            : message,
-        ),
-        {
-          id:
-            typeof rawMessage.id === 'string'
-              ? rawMessage.id
-              : crypto.randomUUID(),
-          role: 'assistant',
-          content: answerContent,
-          createdAt:
-            typeof rawMessage.created_at === 'string'
-              ? rawMessage.created_at
-              : new Date().toISOString(),
-          status: 'sent',
-        },
-      ]);
+      setMessages((current) => {
+        const reconciled = current.filter(
+          (message) => message.id !== requestId,
+        );
+        const knownIds = new Set(reconciled.map((message) => message.id));
+        return [
+          ...reconciled,
+          ...persistedTurn.filter((message) => {
+            if (knownIds.has(message.id)) return false;
+            knownIds.add(message.id);
+            return true;
+          }),
+        ];
+      });
     } catch (caught) {
       setMessages((current) =>
         current.map((message) =>
@@ -996,29 +1047,19 @@ function Dashboard({
           : 'The research assistant is temporarily unavailable.',
       );
     } finally {
-      await loadAssistant(true);
       setChatBusy(false);
     }
   };
 
-  const clearAssistantChat = () => {
-    if (chatBusy) return;
-    setChatError('');
-    setMessages([WELCOME_MESSAGE]);
-    setQuestion('');
-  };
-
   const reloadAssistant = () => {
     assistantLoadStarted.current = true;
-    void loadAssistant();
+    void loadAssistantHistory();
   };
 
   const quotaExhausted = quota?.allowed === false;
   const assistantBusy = chatBusy;
   const composerDisabled =
-    assistantStatus !== 'ready' ||
-    assistantBusy ||
-    quotaExhausted;
+    assistantStatus !== 'ready' || assistantBusy || quotaExhausted;
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -1418,20 +1459,13 @@ function Dashboard({
                 AI research assistant
               </h1>
             </div>
-            <Button
-              variant="outline"
-              onClick={clearAssistantChat}
-              disabled={assistantBusy || messages.length === 1}
-            >
-              <Trash2 /> Clear chat
-            </Button>
           </div>
           <section className="overflow-hidden rounded-2xl border border-white/8 bg-card">
             <div className="border-b border-white/8 bg-[#0a1512] px-5 py-4 md:px-7">
               {assistantStatus === 'loading' || assistantStatus === 'idle' ? (
                 <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                  <LoaderCircle className="size-4 animate-spin" /> Loading daily
-                  allowance…
+                  <LoaderCircle className="size-4 animate-spin" /> Loading
+                  conversation…
                 </div>
               ) : assistantStatus === 'error' || !quota ? (
                 <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
@@ -1505,11 +1539,23 @@ function Dashboard({
             <div className="border-t border-white/8 p-4 md:p-5">
               {chatError && (
                 <div
-                  className="mb-4 flex items-start gap-2 rounded-xl border border-amber-400/20 bg-amber-400/8 p-3 text-sm text-amber-100 normal-case"
+                  className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-amber-400/20 bg-amber-400/8 p-3 text-sm text-amber-100 normal-case"
                   role="alert"
                 >
-                  <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-300" />
-                  <p>{chatError}</p>
+                  <div className="flex items-start gap-2">
+                    <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-300" />
+                    <p>{chatError}</p>
+                  </div>
+                  {assistantStatus === 'ready' && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={reloadAssistant}
+                      disabled={assistantBusy}
+                    >
+                      <RefreshCw /> Reload conversation
+                    </Button>
+                  )}
                 </div>
               )}
               {quotaExhausted && quota && (
@@ -1541,9 +1587,7 @@ function Dashboard({
                     }
                   }}
                   placeholder={
-                    quotaExhausted
-                      ? 'Daily question limit reached.'
-                      : undefined
+                    quotaExhausted ? 'Daily question limit reached.' : undefined
                   }
                   className="min-h-12 resize-none border-white/10 bg-[#081310] normal-case"
                   aria-label="Question for the research assistant"
