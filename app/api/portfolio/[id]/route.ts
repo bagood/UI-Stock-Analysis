@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { isAnalysisWindow } from '@/lib/window-mapping';
 import {
   errorMessage,
   organizerFetch,
@@ -78,8 +79,14 @@ export async function PATCH(
       typeof incoming.price === 'number'
     )
       body.price = String(incoming.price).trim();
-    if (incoming.trading_window !== undefined)
+    if (incoming.trading_window !== undefined) {
+      if (!isAnalysisWindow(incoming.trading_window))
+        return NextResponse.json(
+          { detail: 'A valid trading window is required.' },
+          { status: 400 },
+        );
       body.trading_window = incoming.trading_window;
+    }
     const upstream = await organizerFetch(
       `/portfolios/${id}`,
       { method: 'PATCH', body: JSON.stringify(body) },

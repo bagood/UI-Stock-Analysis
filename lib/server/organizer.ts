@@ -1,3 +1,4 @@
+import type { AnalysisWindow } from '@/lib/window-mapping';
 import { backendUrl } from '@/lib/server/environment';
 
 export const SESSION_COOKIE = 'stocknub_session';
@@ -13,7 +14,7 @@ export type OrganizerPortfolio = {
   id: string;
   ticker: string;
   price: string;
-  trading_window: '5-10dd' | '10-20dd';
+  trading_window: AnalysisWindow;
   username: string;
   created_at: string;
   updated_at: string;

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { isAnalysisWindow } from '@/lib/window-mapping';
 import {
   errorMessage,
   organizerFetch,
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
     if (
       !/^[A-Z0-9.]{1,20}$/.test(ticker) ||
       !/^\d{1,14}(?:\.\d{1,4})?$/.test(price) ||
-      !['5-10dd', '10-20dd'].includes(String(tradingWindow))
+      !isAnalysisWindow(tradingWindow)
     ) {
       return NextResponse.json(
         {

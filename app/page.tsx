@@ -60,8 +60,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
   WINDOW_LABELS,
-  toAnalysisWindow,
-  toPortfolioWindow,
+  isAnalysisWindow,
   type AnalysisWindow,
 } from '@/lib/window-mapping';
 
@@ -321,8 +320,15 @@ function DetailPanel({
             </div>
           )}
           {detail?.status === 'ready' && (
-            <div className="markdown max-h-[520px] overflow-y-auto pr-2">
-              <ReactMarkdown>{detail.text}</ReactMarkdown>
+            <div className="max-h-[520px] overflow-y-auto pr-2">
+              <p className="mb-4 text-xs text-muted-foreground">
+                {WINDOW_LABELS[rollingWindow]}. Follow the dated window and
+                expiry in the source analysis. A later strategy or entry does
+                not restart the window.
+              </p>
+              <div className="markdown">
+                <ReactMarkdown>{detail.text}</ReactMarkdown>
+              </div>
             </div>
           )}
         </AccordionContent>
@@ -470,8 +476,8 @@ function WindowSelect({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="5dd">5–10 trading days</SelectItem>
-          <SelectItem value="10dd">10–20 trading days</SelectItem>
+          <SelectItem value="5dd">{WINDOW_LABELS['5dd']}</SelectItem>
+          <SelectItem value="10dd">{WINDOW_LABELS['10dd']}</SelectItem>
         </SelectContent>
       </Select>
     </div>
@@ -667,13 +673,17 @@ function Dashboard({
             id: string;
             ticker: string;
             price: string;
-            trading_window: '5-10dd' | '10-20dd';
+            trading_window: AnalysisWindow;
           };
+          if (!isAnalysisWindow(row.trading_window))
+            throw new Error(
+              'The portfolio contains an unsupported trading window.',
+            );
           return {
             id: row.id,
             ticker: row.ticker,
             averagePrice: row.price,
-            rollingWindow: toAnalysisWindow(row.trading_window),
+            rollingWindow: row.trading_window,
           };
         }),
       );
@@ -813,7 +823,7 @@ function Dashboard({
           body: JSON.stringify({
             ticker,
             price: String(averagePrice),
-            trading_window: toPortfolioWindow(window),
+            trading_window: window,
           }),
         },
       );
@@ -879,7 +889,7 @@ function Dashboard({
           body: JSON.stringify({
             ticker,
             price: priceInput.trim(),
-            trading_window: toPortfolioWindow(portfolioWindow),
+            trading_window: portfolioWindow,
           }),
         },
       );
@@ -946,7 +956,7 @@ function Dashboard({
         body: JSON.stringify({
           ticker: position.ticker,
           price: position.averagePrice,
-          trading_window: toPortfolioWindow(position.rollingWindow),
+          trading_window: position.rollingWindow,
         }),
       });
       if (!response.ok) failed += 1;
@@ -1148,7 +1158,7 @@ function Dashboard({
                         </p>
                         <div className="mt-1 flex flex-wrap items-baseline gap-x-2">
                           <p className="font-heading text-3xl font-bold tracking-[-0.04em] text-foreground">
-                            {rollingWindow === '5dd' ? '5–10' : '10–20'}
+                            {rollingWindow === '5dd' ? '5' : '10'}
                           </p>
                           <p className="text-sm text-muted-foreground">
                             Trading Sessions
@@ -1166,8 +1176,10 @@ function Dashboard({
                     </div>
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="5dd">5–10 Trading Sessions</SelectItem>
-                    <SelectItem value="10dd">10–20 Trading Sessions</SelectItem>
+                    <SelectItem value="5dd">{WINDOW_LABELS['5dd']}</SelectItem>
+                    <SelectItem value="10dd">
+                      {WINDOW_LABELS['10dd']}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
